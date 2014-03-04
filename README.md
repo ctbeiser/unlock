@@ -23,8 +23,8 @@ If run with no arguments, it'll unlock the main door to your apartment,
 essentially accomplishing the same thing as you putting your ID card next to
 the door lock. To completely unlock the door, you'll need to enter your PIN.
 
-*If you live in IV or another place where you only have 1 door, then I'm not
-sure what will happen, as I have no way to test it.*
+If you live in IV or another place where you only have 1 door, it'll unlock 
+that. As you might expect, the -r flag then does nothing.
 
 ```
 $ ./unlock.py -h
