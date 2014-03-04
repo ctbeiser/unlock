@@ -15,21 +15,28 @@ import getpass
 import argparse
 from bs4 import BeautifulSoup
 
-BASE_URL = 'https://huskycardcenter.neu.edu'
 
-def scrape(path):
-    """ Scrape cookie and sesstoken from given page. """
+def scrape(path, cookie, getCookie):
+    """ Scrape sesstoken and optionally cookie from given page. """
 
-    path = BASE_URL + path
-    page = urllib2.urlopen('{}'.format(path))
-    cookie = page.headers.get('set-cookie').split(';')[0]
-    if args.verbose:
-        print '[i] Got login cookie: {}'.format(cookie)
+    url = 'https://{}{}'.format(BASE_URL, path)
+    if cookie:
+        page_request = urllib2.Request(url, headers=generate_headers(cookie))
+        page = urllib2.urlopen(page_request)
+    else:
+        page = urllib2.urlopen(url)
+    if getCookie:
+        cookie = page.headers.get('set-cookie').split(';')[0]
+        if args.verbose:
+            print '[i] Got login cookie: {}'.format(cookie)
     soup = BeautifulSoup(page.read())
     sesstok = soup.find('script').text.split()[-1][1:-2]
     if args.verbose:
         print '[i] Got login session token: {}'.format(sesstok)
-    return sesstok, cookie
+    if getCookie:
+        return sesstok, cookie
+    else:
+        return sesstok
 
 def generate_headers(cookie):
     headers = {
@@ -89,52 +96,70 @@ def create_config():
     print '[+] Config file created'
     print '[-] Exiting'
 
-
-def main():
-    global args
-    args = get_args()
-    config = get_config()
-
-    if args.verbose: print '[+] Starting'
-
-    sesstok, cookie = scrape('/login/ldap.php')
+def login(config):
+    """ Logins in to huskycardcenter.neu.edu, returns user cookie """
+    
+    sesstok, login_cookie = scrape('/login/ldap.php', None, True)
     post_body = urllib.urlencode({'__sesstok': sesstok, 'user': config['USER'],
                                   'pass': config['PASS']})
+    login = httplib.HTTPSConnection(BASE_URL)
+    login.request('POST', '/login/ldap.php', post_body,
+                  generate_headers(login_cookie))
+    login_response = login.getresponse()
+    cookie = login_response.getheader('set-cookie').split(';')[0]
 
-    login = httplib.HTTPSConnection('huskycardcenter.neu.edu')
-    login.request('POST', '/login/ldap.php', post_body, generate_headers(cookie))
-    r1 = login.getresponse()
-    newcookie = r1.getheader('set-cookie').split(';')[0]
-    if args.verbose: print '[i] Got user cookie: {}'.format(newcookie)
+    if args.verbose: print '[i] Got user cookie: {}'.format(cookie)
 
-    headers = generate_headers(newcookie)
-    test = httplib.HTTPSConnection('huskycardcenter.neu.edu')
-    test.request('GET', '/student/welcome.php', headers=headers)
-    r2 = test.getresponse()
-
-    if 'Welcome to CS Gold WebCard Center' in r2.read():
+    if test_login(cookie):
         if args.verbose: print '[+] Login Successful!'
     else:
         print '[-] Login Failed!'
         print '[-] Exiting'
         sys.exit()
+    
+    return cookie
+
+def test_login(cookie):
+    """ Test whether login to huskycardcenter.neu.edu worked. """
+    
+    headers = generate_headers(cookie)
+    test = httplib.HTTPSConnection(BASE_URL)
+    test.request('GET', '/student/welcome.php', headers=headers)
+    test_response = test.getresponse()
+
+    if 'Welcome to CS Gold WebCard Center' in test_response.read():
+        return True
+    else:
+        return False
+    
+
+def unlock_door(cookie):
+    """ Provided the user's cookie, sends the request to unlock the door. """
 
     if args.verbose: print '[+] Getting door session token'
-    openmydoor = httplib.HTTPSConnection('huskycardcenter.neu.edu')
-    openmydoor.request('GET', '/student/openmydoor.php', headers=headers)
-    r3 = openmydoor.getresponse()
-    soup = BeautifulSoup(r3.read())
-    door_sesstok = soup.find('script').text.split()[-1][1:-2]
+    door_sesstok = scrape('/student/openmydoor.php', cookie, False)
     if args.verbose: print '[i] Got sesstok: {}'.format(door_sesstok)
 
     room = 2 if args.room else 1
     open_body = urllib.urlencode({'__sesstok': door_sesstok,
                                   'doorType': room, 'answeredYes': 'yes'})
-
     if args.verbose: print '[+] Unlocking door! (it may take up to 10 seconds,\
  wait for it)'
-    boom = httplib.HTTPSConnection('huskycardcenter.neu.edu')
-    boom.request('POST', '/student/openmydoor.php', open_body, headers)
+    unlock = httplib.HTTPSConnection('huskycardcenter.neu.edu')
+    unlock.request('POST', '/student/openmydoor.php', open_body, 
+                 generate_headers(cookie))
+    
+
+def main():
+    global args, BASE_URL
+    args = get_args()
+    BASE_URL = 'huskycardcenter.neu.edu'
+    config = get_config()
+
+    if args.verbose: print '[+] Starting'
+
+    cookie = login(config)
+    unlock_door(cookie)
 
 if __name__ == '__main__':
     main()
